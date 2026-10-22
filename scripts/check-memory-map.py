@@ -8,6 +8,10 @@ DEVICE = Path(__file__).resolve().parents[1]
 UEFI = DEVICE.parent / 'Mu-Silicium'
 PACKAGE = UEFI / 'Platforms/OnePlus/fairladyPkg'
 DTB = DEVICE / 'sysinfo/live.dtb'
+if not DTB.is_file():
+    DTB = DEVICE.parent / 'files/fairlady/fairlady.dtb'
+if not DTB.is_file():
+    DTB = DEVICE.parent / 'files/fairlady/sysinfo/live.dtb'
 
 
 def dt_ranges(node):
