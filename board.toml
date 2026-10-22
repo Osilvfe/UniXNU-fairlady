@@ -16,12 +16,12 @@ archives = [
 
 [payload]
 volume = "UNIXNU15T"
-size_mib = 64
+size_mib = 280
 loader = "firmware"
 title = "OnePlus 15T (fairlady) UniXNU"
-dram_size = "0x10000000"
+dram_size = "0x20000000"
 timeout = 10
-kernel_args = ["-v", "serial=0", "debug=0x14e", "cpus=1", "-enable_kprintf_spam", "kt_fixed_zones=240"]
+kernel_args = ["-v", "serial=0", "debug=0x14e", "cpus=1", "-enable_kprintf_spam", "kt_fixed_zones=240", "rd=md0"]
 
 [payload.adt]
 tool = "scripts/make-fairlady-adt.py"

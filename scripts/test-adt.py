@@ -67,6 +67,11 @@ class AdtTest(unittest.TestCase):
         self.assertEqual(nodes['/device-tree/arm-io/timer']['device_type'], b'timer\0')
         self.assertEqual(nodes['/device-tree/arm-io/timer']['timebase-frequency'], struct.pack('<I', adt.TIMEBASE))
 
+    def test_ramdisk_mapping(self):
+        nodes = decode(adt.make_tree(0x10000000, bytes(64), ramdisk=True, trust_cache=True))
+        self.assertEqual(nodes['/device-tree/chosen/memory-map']['RAMDisk'], bytes(16))
+        self.assertEqual(nodes['/device-tree/chosen/memory-map']['TrustCache'], bytes(16))
+
 
 if __name__ == '__main__':
     unittest.main()

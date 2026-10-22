@@ -275,7 +275,7 @@ void boot_progress_panic(const char *format, va_list *args, unsigned long caller
     __asm__ volatile("mrs %0, tcr_el1" : "=r"(tcr));
     __asm__ volatile("mrs %0, ttbr1_el1" : "=r"(ttbr1));
 #endif
-    panic_open("OnePlus 13T / XNU PANIC");
+    panic_open("OnePlus 15T / XNU PANIC");
     text_raw("panic entry reached; values below are hexadecimal\n");
     value_raw("caller", caller); value_raw("MPIDR", mpidr);
     text_raw("last stage: "); text_raw(stage_count ? stages[(stage_count - 1) % HISTORY] : "none"); putc_raw('\n');
@@ -403,7 +403,7 @@ void boot_progress_init(void)
 void early_boot_progress_fatal(boot_args *args, uint64_t esr, uint64_t elr, uint64_t far, uint64_t spsr, uint64_t stage)
 {
     early_boot_progress_init(args);
-    if (framebuffer) panic_open("OnePlus 13T / EARLY EXCEPTION");
+    if (framebuffer) panic_open("OnePlus 15T / EARLY EXCEPTION");
     value_raw("last checkpoint", stage);
     value_raw("ESR_EL1", esr); value_raw("ELR_EL1", elr);
     value_raw("FAR_EL1", far); value_raw("SPSR_EL1", spsr);

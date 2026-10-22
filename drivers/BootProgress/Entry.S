@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
-// Cold boot only. The 13T profile keeps cpus=1 until SMP is separately qualified.
+// Cold boot only. The 15T profile keeps cpus=1 until SMP is separately qualified.
 .text
 .p2align 2
 .globl _early_boot_progress_entry

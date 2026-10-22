@@ -50,21 +50,33 @@ def empty_nvram_proxy():
     ]
 
 
-def make_tree(memory_size, random_seed):
+def make_tree(memory_size, random_seed, ramdisk=False, packed_ramdisk=False, trust_cache=False, root_match_uuid=None):
     if len(random_seed) != 64:
         raise ValueError('Random seed must be 64 bytes')
+    memory_map_props = []
+    if ramdisk:
+        memory_map_props.append(('RAMDisk', bytes(16)))
+    elif packed_ramdisk:
+        memory_map_props.append(('PackedRAMDisk', bytes(16)))
+    if trust_cache:
+        memory_map_props.append(('TrustCache', bytes(16)))
+
+    chosen_props = [
+        ('random-seed', random_seed),
+        *empty_nvram_proxy(),
+        ('dram-base', bytes(8)),
+        ('dram-size', bytes(8)),
+        ('darwinboot-memory-size', struct.pack('<Q', memory_size)),
+    ]
+    if root_match_uuid:
+        chosen_props.append(('root-matching', root_match_uuid.encode() + b'\0'))
+
     return node('device-tree', [
         ('model', b'OnePlus 15T\0'),
         ('compatible', b'oneplus,fairlady\0qcom,sm8850\0'),
     ], [
-        node('chosen', [
-            ('random-seed', random_seed),
-            *empty_nvram_proxy(),
-            ('dram-base', bytes(8)),
-            ('dram-size', bytes(8)),
-            ('darwinboot-memory-size', struct.pack('<Q', memory_size)),
-        ], [
-            node('memory-map'),
+        node('chosen', chosen_props, [
+            node('memory-map', memory_map_props),
         ]),
         node('cpus', children=[
             node('cpu0', [
@@ -111,12 +123,29 @@ def main():
     parser.add_argument('--dram-size', type=lambda s: int(s, 0), default=0x10000000)
     parser.add_argument('--owned-memory-size', type=lambda s: int(s, 0), default=0x10000000)
     parser.add_argument('--cpu-regs', default='0')
+    parser.add_argument('--ramdisk', action='store_true')
+    parser.add_argument('--data-ramdisk', action='store_true', dest='ramdisk')
+    parser.add_argument('--packed-data-ramdisk', action='store_true')
+    parser.add_argument('--trust-cache', action='store_true')
+    parser.add_argument('--chip-id', default=None)
+    parser.add_argument('--root-match-volume-uuid', default=None)
+    parser.add_argument('--unique-chip-id', default=None)
+    parser.add_argument('--ipad-identity', action='store_true')
+    parser.add_argument('--psci-method', default=None)
     args = parser.parse_args()
 
-    data = make_tree(args.owned_memory_size, os.urandom(64))
+    data = make_tree(
+        args.owned_memory_size,
+        os.urandom(64),
+        ramdisk=args.ramdisk,
+        packed_ramdisk=args.packed_data_ramdisk,
+        trust_cache=args.trust_cache,
+        root_match_uuid=args.root_match_volume_uuid,
+    )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_bytes(data)
-    print(f'fairlady ADT: {len(data)} bytes, cpu0, GICv3 (0x{GIC_BASE:08x}), {TIMEBASE} Hz')
+    ramdisk_desc = " [RAMDisk]" if args.ramdisk else (" [PackedRAMDisk]" if args.packed_data_ramdisk else "")
+    print(f'fairlady ADT: {len(data)} bytes, cpu0, GICv3 (0x{GIC_BASE:08x}), {TIMEBASE} Hz{ramdisk_desc}')
 
 
 if __name__ == '__main__':
