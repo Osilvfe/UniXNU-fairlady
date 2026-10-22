@@ -100,7 +100,7 @@ index 6e71ecd..c2216c3 100644
  1. [Port the UEFI firmware](/porting/uefi-firmware) so the device reaches a menu, a framebuffer and a payload volume.
 diff --git a/docs/porting/oneplus-13t-menu.md b/docs/porting/oneplus-13t-menu.md
 new file mode 100644
-index 0000000..eaa1a65
+index 0000000..7b9ecad
 --- /dev/null
 +++ b/docs/porting/oneplus-13t-menu.md
 @@ -0,0 +1,228 @@
@@ -940,7 +940,7 @@ index 91f276a..f1761cb 100644
  1. [移植 UEFI 固件](/zh/porting/uefi-firmware)，让设备能进入菜单、使用 framebuffer 和负载卷。
 diff --git a/docs/zh/porting/oneplus-13t-menu.md b/docs/zh/porting/oneplus-13t-menu.md
 new file mode 100644
-index 0000000..6082f7f
+index 0000000..6d7aff3
 --- /dev/null
 +++ b/docs/zh/porting/oneplus-13t-menu.md
 @@ -0,0 +1,228 @@
@@ -1785,6 +1785,101 @@ index bfdb3b3..ff8da41 100644
  
  [Protocols]
    gEfiAcpiTableProtocolGuid         ## SOMETIMES_CONSUMES
+diff --git a/patches/xnu/native-4k-dynamic-memory-l3.patch b/patches/xnu/native-4k-dynamic-memory-l3.patch
+new file mode 100644
+index 0000000..561b538
+--- /dev/null
++++ b/patches/xnu/native-4k-dynamic-memory-l3.patch
+@@ -0,0 +1,89 @@
++diff --git a/osfmk/arm/pmap/pmap.c b/osfmk/arm/pmap/pmap.c
++index 7db00b6..ca8f2c2 100644
++--- a/osfmk/arm/pmap/pmap.c
+++++ b/osfmk/arm/pmap/pmap.c
++@@ -6525,6 +6525,11 @@ pmap_enter_options_addr(
++ 			if (nowait_requested) {
++ 				break;
++ 			}
+++#if !defined(APPLE_ARM64_ARCH_FAMILY)
+++			if (__improbable(kernel_map == VM_MAP_NULL)) {
+++				panic("early pmap_enter: resource shortage (no L3 table): v=%p pa=%p", (void *)v, (void *)pa);
+++			}
+++#endif
++ 		}
++ 	} while (kr == KERN_RESOURCE_SHORTAGE || kr == KERN_ABORTED);
++ 
++diff --git a/osfmk/arm64/arm_vm_init.c b/osfmk/arm64/arm_vm_init.c
++index 985370e..68a87fa 100644
++--- a/osfmk/arm64/arm_vm_init.c
+++++ b/osfmk/arm64/arm_vm_init.c
++@@ -2264,8 +2264,17 @@ arm_vm_init(uint64_t memory_size, boot_args * args)
++ 	mem_segments = (mem_size + 0x0FFFFFFF) >> 28;
++ 
++ 	va_l1 = dynamic_memory_begin;
+++#if !defined(APPLE_ARM64_ARCH_FAMILY) && !__ARM_16K_PG__
+++	/* Native 4 KiB: pre-allocate L3 tables for at least 256 MiB of dynamic memory
+++	 * plus framebuffers (mapped multiple times by boot progress and video console).
+++	 * This prevents pmap_expand() during pmap_steal_memory() before pageout is running.
+++	 */
+++	va_l1_end = va_l1 + ((mem_segments * 32 + 256) << 20);
+++	va_l1_end += round_page(args->Video.v_height * args->Video.v_rowBytes) * 4;
+++#else
++ 	va_l1_end = va_l1 + ((2 + (mem_segments * 10)) << 20);
++ 	va_l1_end += round_page(args->Video.v_height * args->Video.v_rowBytes);
+++#endif
++ 	va_l1_end = (va_l1_end + 0x00000000007FFFFFULL) & 0xFFFFFFFFFF800000ULL;
++ 
++ 	cpu_l1_tte = cpu_tte + ((va_l1 & ARM_TT_L1_INDEX_MASK) >> ARM_TT_L1_SHIFT);
++diff --git a/osfmk/vm/vm_resident.c b/osfmk/vm/vm_resident.c
++index b28939a..7740c4b 100644
++--- a/osfmk/vm/vm_resident.c
+++++ b/osfmk/vm/vm_resident.c
++@@ -93,6 +93,7 @@
++ #include <pexpert/device_tree.h>
++ #include <san/kasan.h>
++ #include <os/log.h>
+++#include <kern/boot_progress.h>
++ 
++ #include <vm/vm_protos.h>
++ #include <vm/memory_object.h>
++@@ -1153,11 +1154,13 @@ vm_page_bootstrap(
++ #endif /* VM_PAGE_BUCKETS_CHECK */
++ 
++ 	kernel_debug_string_early("vm_page_buckets");
+++	boot_progress_stage("vm_page_bootstrap: buckets");
++ 	vm_page_buckets = (vm_page_bucket_t *)
++ 	    pmap_steal_memory(vm_page_bucket_count *
++ 	    sizeof(vm_page_bucket_t), 0);
++ 
++ 	kernel_debug_string_early("vm_page_bucket_locks");
+++	boot_progress_stage("vm_page_bootstrap: locks");
++ 	vm_page_bucket_locks = (lck_spin_t *)
++ 	    pmap_steal_memory(vm_page_bucket_lock_count *
++ 	    sizeof(lck_spin_t), 0);
++@@ -1191,12 +1194,14 @@ vm_page_bootstrap(
++ 	 */
++ 
++ 	kernel_debug_string_early("pmap_startup");
+++	boot_progress_stage("pmap_startup calling");
++ 	pmap_startup(&virtual_space_start, &virtual_space_end);
++ 	virtual_space_start = round_page(virtual_space_start);
++ 	virtual_space_end = trunc_page(virtual_space_end);
++ 
++ 	*startp = virtual_space_start;
++ 	*endp = virtual_space_end;
+++	boot_progress_stage("pmap_startup returned");
++ 
++ 	/*
++ 	 *	Compute the initial "wire" count.
++@@ -1454,7 +1459,9 @@ pmap_startup(
++ 	npages = (uint_t)(mem_sz / (PAGE_SIZE + sizeof(*vm_pages)));    /* scaled to include the vm_page_ts */
++ 
++ 
+++	boot_progress_stage("pmap_startup: steal vm_pages");
++ 	vm_pages = (vm_page_t) pmap_steal_freeable_memory(npages * sizeof *vm_pages);
+++	boot_progress_stage("pmap_startup: vm_pages stolen");
++ 
++ 	/*
++ 	 * Check if we want to initialize pages to a known value
 diff --git a/patches/xnu/native-arch-timer-frequency.patch b/patches/xnu/native-arch-timer-frequency.patch
 new file mode 100644
 index 0000000..53459bf
@@ -2496,7 +2591,7 @@ index 3c19f4d..5e0b9b9 100755
              return restore(entry, trust_destination, trust_tag)
 diff --git a/scripts/test-bootimg.py b/scripts/test-bootimg.py
 new file mode 100644
-index 0000000..a0d952b
+index 0000000..510e81e
 --- /dev/null
 +++ b/scripts/test-bootimg.py
 @@ -0,0 +1,134 @@

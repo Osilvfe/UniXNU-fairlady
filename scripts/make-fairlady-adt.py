@@ -85,6 +85,12 @@ def make_tree(memory_size, random_seed):
                 ('compatible', b'arm,gic-v3\0'),
                 ('reg', struct.pack('<4Q', 0, GIC_SIZE, GICR_BASE - GIC_BASE, GICR_SIZE)),
                 ('redistributor-stride', struct.pack('<Q', GICR_STRIDE)),
+                ('interrupt-controller', b'master\0'),
+            ]),
+            node('timer', [
+                ('device_type', b'timer\0'),
+                ('reg', struct.pack('<2Q', 0, 0x1000)),
+                ('timebase-frequency', struct.pack('<I', TIMEBASE)),
             ]),
         ]),
         node('defaults', [

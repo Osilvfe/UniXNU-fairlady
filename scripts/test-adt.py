@@ -63,6 +63,9 @@ class AdtTest(unittest.TestCase):
         self.assertLessEqual(reg[2] + reg[3], bus[2])
         self.assertEqual(adt.GIC_BASE, 0x17000000)
         self.assertEqual(adt.GICR_BASE, 0x17080000)
+        self.assertEqual(nodes['/device-tree/arm-io/intc']['interrupt-controller'], b'master\0')
+        self.assertEqual(nodes['/device-tree/arm-io/timer']['device_type'], b'timer\0')
+        self.assertEqual(nodes['/device-tree/arm-io/timer']['timebase-frequency'], struct.pack('<I', adt.TIMEBASE))
 
 
 if __name__ == '__main__':
