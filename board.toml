@@ -16,7 +16,7 @@ archives = [
 
 [payload]
 volume = "UNIXNU15T"
-size_mib = 280
+size_mib = 180
 loader = "firmware"
 title = "OnePlus 15T (fairlady) UniXNU"
 dram_size = "0x20000000"
