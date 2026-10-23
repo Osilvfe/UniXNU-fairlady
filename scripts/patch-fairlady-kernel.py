@@ -254,6 +254,11 @@ banner_text:
         data[hook_foff:hook_foff+len(full_injection)] = full_injection
         print(f"  [OK] Injected banner payload at 0x{hook_va:x} (foff 0x{hook_foff:x}, {len(full_injection)} bytes)")
 
+    # 11. OSMetaClass duplicate class bypass
+    # When NativeUfs links IOBlockStorageDevice into __kernel__, IOStorageFamily.kext panics on duplicate class.
+    # Bypass panic by branching to next class in kext.
+    patch_foff(text_off + 0x5f2ee4, bytes.fromhex("000e0054"), bytes.fromhex("eeffff17"), "OSMetaClass duplicate class bypass")
+
     path.write_bytes(data)
     print(f"\nAll patches successfully applied to {macho_path}!")
 
