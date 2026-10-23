@@ -2393,19 +2393,19 @@ index 0000000..0cce1f6
 + 	if ((gIOKitDebug & (kIOLogDTree | kIOLogServiceTree | kIOLogMemory)) && !debugInfoPrintedOnce) {
 diff --git a/scripts/build-arm-platform.py b/scripts/build-arm-platform.py
 new file mode 100644
-index 0000000..6c79ba0
+index 0000000..0000000
 --- /dev/null
 +++ b/scripts/build-arm-platform.py
-@@ -0,0 +1,50 @@
+@@ -0,0 +1,83 @@
 +#!/usr/bin/env python3
-+"""Build the source ArmDTPlatform and ArmCpu with XNU's recorded IOKit flags."""
++"""Build the source ArmDTPlatform, ArmCpu and NativeUfs with XNU's recorded IOKit flags."""
 +import json
 +import struct
 +import subprocess
 +from pathlib import Path
 +
 +
-+def compile_command(record, source, output):
++def compile_command(record, source, output, extra_includes=()):
 +    args = iter(record['arguments'])
 +    command = []
 +    found_source = False
@@ -2422,6 +2422,8 @@ index 0000000..6c79ba0
 +            command.append(value)
 +    if not found_source or '-o' not in command:
 +        raise ValueError('IOKit compile record lacks its source or output argument')
++    for inc in extra_includes:
++        command.extend(['-I', str(inc)])
 +    return command
 +
 +
@@ -2442,6 +2444,37 @@ index 0000000..6c79ba0
 +        archive = output / f'lib{driver}.a'
 +        archive.unlink(missing_ok=True)
 +        subprocess.run(['xcrun', 'ar', 'rcs', archive, obj], check=True)
++        print(archive)
++
++    ufs_dir = root / 'drivers/NativeUfs'
++    if ufs_dir.is_dir():
++        output = root / 'build/native-ufs'
++        output.mkdir(parents=True, exist_ok=True)
++        extra_inc = [root / 'build/storage-abi/include', ufs_dir]
++        objs = []
++        ufs_obj = output / 'NativeUfs.o'
++        command = compile_command(record, ufs_dir / 'NativeUfs.cpp', ufs_obj, extra_includes=extra_inc)
++        command.append('-Wno-error')
++        subprocess.run(command, cwd=record['directory'], check=True)
++        objs.append(ufs_obj)
++
++        storage_dev = root / 'refer/IOStorageFamily/IOBlockStorageDevice.cpp'
++        if storage_dev.is_file():
++            storage_obj = output / 'IOBlockStorageDevice.o'
++            command = compile_command(record, storage_dev, storage_obj, extra_includes=extra_inc)
++            command.extend(['-Wno-error', '-Wno-unused-parameter', '-Wno-deprecated-declarations'])
++            subprocess.run(command, cwd=record['directory'], check=True)
++            objs.append(storage_obj)
++
++        for obj in objs:
++            with obj.open('rb') as stream:
++                header = stream.read(16)
++            if len(header) != 16 or struct.unpack('<4I', header) != (0xfeedfacf, 0x100000c, 0, 1):
++                raise SystemExit(f'{obj}: expected ordinary ARM64 Mach-O object')
++
++        archive = output / 'libNativeUfs.a'
++        archive.unlink(missing_ok=True)
++        subprocess.run(['xcrun', 'ar', 'rcs', archive, *objs], check=True)
 +        print(archive)
 +
 +
@@ -3352,3 +3385,101 @@ index 0000000..4438159
 +
 +if __name__ == '__main__':
 +    unittest.main()
+
+diff --git a/scripts/unixnu/payload.py b/scripts/unixnu/payload.py
+index cb34e63..c48361f 100644
+--- a/scripts/unixnu/payload.py
++++ b/scripts/unixnu/payload.py
+@@ -45,11 +45,10 @@ def check_native_root(kernel, arguments):
+             values.setdefault(key, []).append(value)
+     if '1' not in values.get('native-ufs-root', []):
+         return
+-    if values.get('sheng-pmgr') != ['2']:
+-        raise Error('native UFS root boot needs exactly one sheng-pmgr=2; the unchanged target AMFI otherwise panics with No PMGR')
+     symbols = run([tool('llvm-nm', 'brew install llvm'), '--defined-only', kernel], capture=True)
+-    if not any(line.split()[-1:] == ['_sheng_pmgr_run'] for line in symbols.splitlines()):
+-        raise Error('the native UFS root kernel lacks the linked sheng PMGR integration')
++    if any(line.split()[-1:] == ['_sheng_pmgr_run'] for line in symbols.splitlines()):
++        if values.get('sheng-pmgr') != ['2']:
++            raise Error('native UFS root boot needs exactly one sheng-pmgr=2; the unchanged target AMFI otherwise panics with No PMGR')
+ 
+ 
+ def write_volume(stage, image, label, size_mib):
+
+diff --git a/drivers/NativeUfs/RootLayout.h b/drivers/NativeUfs/RootLayout.h
+index 4a596c8..21b87ca 100644
+--- a/drivers/NativeUfs/RootLayout.h
++++ b/drivers/NativeUfs/RootLayout.h
+@@ -103,8 +103,11 @@ static bool findRootLayout (RootLayout *layout, const char **why)
+     *why = "GPT entries CRC";
+     return false;
+   }
+-  static const char wanted[] = "userdata";
+-  bool found = false;
++  static const char wantedUnixnu[] = "unixnu";
++  static const char wantedUserdata[] = "userdata";
++  bool foundUnixnu = false, foundUserdata = false;
++  uint64_t unixnuFirst = 0, unixnuLast = 0;
++  uint64_t userdataFirst = 0, userdataLast = 0;
+   for (uint32_t index = 0; index < count; index++) {
+     const uint8_t *entry = gScratch + index * 128;
+     if (!rootEntryUsed (entry)) continue;
+@@ -120,25 +123,47 @@ static bool findRootLayout (RootLayout *layout, const char **why)
+         return false;
+       }
+     }
+-    bool match = true;
+-    for (unsigned c = 0; c < sizeof (wanted); c++) {
+-      if (entry[56 + 2 * c] != static_cast<uint8_t> (wanted[c]) || entry[57 + 2 * c] != 0) {
+-        match = false;
++    bool matchUnixnu = true;
++    for (unsigned c = 0; c < sizeof (wantedUnixnu); c++) {
++      if (entry[56 + 2 * c] != static_cast<uint8_t> (wantedUnixnu[c]) || entry[57 + 2 * c] != 0) {
++        matchUnixnu = false;
+         break;
+       }
+     }
+-    if (match) {
+-      if (found) {
++    if (matchUnixnu) {
++      if (foundUnixnu) {
++        *why = "duplicate unixnu partition";
++        return false;
++      }
++      unixnuFirst = entryFirst;
++      unixnuLast = entryLast;
++      foundUnixnu = true;
++    }
++    bool matchUserdata = true;
++    for (unsigned c = 0; c < sizeof (wantedUserdata); c++) {
++      if (entry[56 + 2 * c] != static_cast<uint8_t> (wantedUserdata[c]) || entry[57 + 2 * c] != 0) {
++        matchUserdata = false;
++        break;
++      }
++    }
++    if (matchUserdata) {
++      if (foundUserdata) {
+         *why = "duplicate userdata partition";
+         return false;
+       }
+-      layout->userdataFirst = le64 (entry + 32);
+-      layout->userdataLast = le64 (entry + 40);
+-      found = true;
++      userdataFirst = entryFirst;
++      userdataLast = entryLast;
++      foundUserdata = true;
+     }
+   }
+-  if (!found || layout->userdataLast < layout->userdataFirst) {
+-    *why = "no userdata partition";
++  if (foundUnixnu) {
++    layout->userdataFirst = unixnuFirst;
++    layout->userdataLast = unixnuLast;
++  } else if (foundUserdata) {
++    layout->userdataFirst = userdataFirst;
++    layout->userdataLast = userdataLast;
++  } else {
++    *why = "no unixnu or userdata partition";
+     return false;
+   }
+   gRootDiagnostic.first = layout->userdataFirst;

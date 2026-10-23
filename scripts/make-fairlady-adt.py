@@ -61,12 +61,29 @@ def make_tree(memory_size, random_seed, ramdisk=False, packed_ramdisk=False, tru
     if trust_cache:
         memory_map_props.append(('TrustCache', bytes(16)))
 
+    manifest_props = [
+        ('BORD', struct.pack('<I', 25821)),
+        ('CHIP', struct.pack('<I', 0x8850)),
+        ('ECID', struct.pack('<Q', 0x1570000000000001)),
+        ('CPRO', struct.pack('<I', 1)),
+        ('CSEC', struct.pack('<I', 1)),
+        ('EPRO', struct.pack('<I', 1)),
+        ('ESEC', struct.pack('<I', 1)),
+        ('SDOM', struct.pack('<I', 1)),
+        ('snon', bytes(32)),
+        ('BNCH', bytes(48)),
+    ]
+
     chosen_props = [
         ('random-seed', random_seed),
         *empty_nvram_proxy(),
         ('dram-base', bytes(8)),
         ('dram-size', bytes(8)),
         ('darwinboot-memory-size', struct.pack('<Q', memory_size)),
+        ('crypto-hash-method', b'sha2-384\0'),
+        ('boot-args', b'amfi_get_out_of_my_way=1 amfi_allow_any_signature=1 cs_enforcement_disable=1 cs_integrity_skip=1 -v\0'),
+        ('amfi-only-platform-code', struct.pack('<I', 1)),
+        ('amfi-allows-trust-cache-load', struct.pack('<I', 1)),
     ]
     if root_match_uuid:
         chosen_props.append(('root-matching', root_match_uuid.encode() + b'\0'))
@@ -77,6 +94,10 @@ def make_tree(memory_size, random_seed, ramdisk=False, packed_ramdisk=False, tru
     ], [
         node('chosen', chosen_props, [
             node('memory-map', memory_map_props),
+            node('manifest-properties', manifest_props),
+            node('asmb'),
+            node('boot-object-manifests'),
+            node('secure-boot-hashes'),
         ]),
         node('cpus', children=[
             node('cpu0', [
